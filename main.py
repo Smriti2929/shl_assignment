@@ -46,12 +46,13 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest):
 
+    agent = get_agent()
     conversation = [
-        m.model_dump()
-        for m in request.messages
+        message.model_dump()
+        for message in request.messages
     ]
 
-    reply = get_agent.run(conversation)
+    reply = agent.run(conversation)
 
     recommendations = []
 
@@ -71,8 +72,8 @@ def chat(request: ChatRequest):
     
     if not needs_more_info:
 
-        search_query = get_agent.build_search_query(conversation)
-        docs = get_agent.retriever.retrieve(search_query, top_k=5)
+        search_query = agent.build_search_query(conversation)
+        docs = agent.retriever.retrieve(search_query, top_k=5)
 
         for doc in docs:
 
