@@ -178,16 +178,31 @@ class SHLAgent:
         )
 
     def generate_llm_response(self, prompt):
-        """
-        Call Gemini.
-        """
-
-        response = self.client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
+       
+        try:
+            response = self.client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt
         )
 
-        return response.text
+            return response.text
+
+        except Exception as e:
+            print("=" * 80)
+            print("GEMINI ERROR")
+            print("=" * 80)
+
+            print(type(e))
+            print(e)
+
+            if hasattr(e, "response"):
+                print(e.response)
+
+            if hasattr(e, "message"):
+                print(e.message)
+
+            raise
+
     
     def format_retrieved_documents(self, retrieved_documents):
         """
