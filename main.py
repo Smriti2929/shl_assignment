@@ -6,7 +6,13 @@ from app.agent import SHLAgent
 
 app = FastAPI()
 
-agent = SHLAgent()
+agent = None
+
+def get_agent():
+    global agent
+    if agent is None:
+        agent = SHLAgent()
+    return agent
 
 
 class Message(BaseModel):
@@ -45,7 +51,7 @@ def chat(request: ChatRequest):
         for m in request.messages
     ]
 
-    reply = agent.run(conversation)
+    reply = get_agent.run(conversation)
 
     recommendations = []
 
@@ -65,8 +71,8 @@ def chat(request: ChatRequest):
     
     if not needs_more_info:
 
-        search_query = agent.build_search_query(conversation)
-        docs = agent.retriever.retrieve(search_query, top_k=5)
+        search_query = get_agent.build_search_query(conversation)
+        docs = get_agent.retriever.retrieve(search_query, top_k=5)
 
         for doc in docs:
 
