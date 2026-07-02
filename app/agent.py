@@ -1,7 +1,6 @@
 from app.retriever import Retriever
 
 from google import genai
-from google.genai import types
 import os
 
 from dotenv import load_dotenv
@@ -15,40 +14,47 @@ from app.prompts import (
     REFUSAL_GUIDELINES,
 )
 
-# Load environment variables
 load_dotenv()
+
 
 class SHLAgent:
 
     def __init__(self):
 
-        self.retriever = Retriever()
+        # Lazy loaded to reduce Render startup memory
+        self.retriever = None
 
         self.client = genai.Client(
-            api_key=os.getenv("GEMINI_API_KEY")    
+            api_key=os.getenv("GEMINI_API_KEY")
         )
 
-    def get_latest_user_message(self, conversation):
-
+    def get_retriever(self):
         """
-        Returns the latest user message from the conversation.
+        Lazily loads Retriever only when retrieval
+        is actually required.
+        """
+
+        if self.retriever is None:
+            self.retriever = Retriever()
+
+        return self.retriever
+
+    def get_latest_user_message(self, conversation):
+        """
+        Returns the latest user message.
         """
 
         for message in reversed(conversation):
 
             if message["role"] == "user":
-
                 return message["content"]
 
         return ""
-    
+
     def build_search_query(self, conversation):
         """
-        Builds a retrieval query using recent conversation history.
-        This helps refinement requests like:
-        - Add personality
-        - Remove OPQ
-        - Add simulations
+        Build a retrieval query using the
+        entire conversation history.
         """
 
         query_parts = []
@@ -59,73 +65,14 @@ class SHLAgent:
                 query_parts.append(message["content"])
 
         return " ".join(query_parts)
-    
-    def is_comparison(self, message):
-        """
-        Detect comparison requests.
-        """
 
-        message = message.lower()
-
-        comparison_keywords = [
-            "compare",
-            "difference",
-            "vs",
-            "versus",
-            "better than"
-        ]
-
-        return any(keyword in message for keyword in comparison_keywords)
-    
-    def comparison_prompt(
-        self,
-        conversation,
-        retrieved_context
-    ):
-        """
-        Builds a prompt specifically for comparison questions.
-        """
-
-        conversation_text = ""
-
-        for message in conversation:
-
-            conversation_text += (
-                f"{message['role'].capitalize()}: "
-                f"{message['content']}\n"
-            )
-
-        prompt = f"""
-{SYSTEM_PROMPT}
-
-{COMPARISON_GUIDELINES}
-
-Conversation
-
-{conversation_text}
-
-Relevant SHL Assessments
-
-{retrieved_context}
-
-Compare ONLY using the information in the retrieved assessments.
-
-Do not invent features, capabilities or differences.
-If information is missing, explicitly say so.
-"""
-
-        return prompt
-    
     def needs_clarification(self, message):
-
         """
-        Decide whether enough hiring context exists
-        before retrieving assessments.
+        Decide whether enough hiring context exists.
         """
 
         message = message.lower()
 
-        # Hiring role keywords
         role_keywords = [
             "developer",
             "engineer",
@@ -142,44 +89,41 @@ If information is missing, explicitly say so.
             "executive",
             "technician",
             "consultant",
-            "operator"
+            "operator",
         ]
 
-        has_role = any(keyword in message for keyword in role_keywords)
+        has_role = any(
+            keyword in message
+            for keyword in role_keywords
+        )
 
-        if not has_role:
-            return True
+        return not has_role
 
-        return False
-    
     def ask_clarification(self):
-
         """
-        Returns a clarification question.
+        Ask for missing hiring context.
         """
 
         return (
             "Could you please tell me the job role or position "
             "you are hiring for?"
         )
-    
+
     def is_off_topic(self, message):
-         """
-         Detect whether the user's request is unrelated
-         to SHL assessments or hiring.
-         """
+        """
+        Detect requests outside SHL scope.
+        """
 
-         message = message.lower()
+        message = message.lower()
 
-         hiring_keywords = [
-
-             "hire",
-             "hiring",
-             "candidate",
-             "assessment",
+        hiring_keywords = [
+            "hire",
+            "hiring",
+            "candidate",
+            "assessment",
             "assessment test",
             "test",
-             "screen",
+            "screen",
             "screening",
             "recruit",
             "recruitment",
@@ -194,21 +138,17 @@ If information is missing, explicitly say so.
             "java",
             "python",
             "leadership",
-            "personality"
-
+            "personality",
         ]
 
-         for keyword in hiring_keywords:
+        return not any(
+            keyword in message
+            for keyword in hiring_keywords
+        )
 
-            if keyword in message:
-
-                return False
-         return True
-    
     def off_topic_response(self):
-
         """
-        Response for unrelated questions.
+        Refuse unrelated requests.
         """
 
         return (
@@ -216,22 +156,40 @@ If information is missing, explicitly say so.
             "for hiring and talent evaluation. "
             "Please ask a recruitment or assessment-related question."
         )
-    
-    def generate_llm_response(self, prompt):
 
+    def is_comparison(self, message):
         """
-        Sends a prompt to Gemini and returns the response text.
+        Detect comparison requests.
+        """
+
+        message = message.lower()
+
+        comparison_keywords = [
+            "compare",
+            "difference",
+            "vs",
+            "versus",
+            "better than",
+        ]
+
+        return any(
+            keyword in message
+            for keyword in comparison_keywords
+        )
+
+    def generate_llm_response(self, prompt):
+        """
+        Call Gemini.
         """
 
         response = self.client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=prompt
+            contents=prompt,
         )
 
         return response.text
     
     def format_retrieved_documents(self, retrieved_documents):
-
         """
         Converts retrieved SHL assessments into
         clean text for Gemini.
@@ -264,16 +222,14 @@ If information is missing, explicitly say so.
             )
 
         return formatted_text
-    
+
     def build_prompt(
         self,
         conversation,
         retrieved_context,
     ):
-
         """
-        Builds the complete prompt
-        sent to Gemini.
+        Builds the recommendation prompt.
         """
 
         conversation_text = ""
@@ -307,6 +263,8 @@ Instructions
 
 {RECOMMENDATION_GUIDELINES}
 
+{REFINEMENT_GUIDELINES}
+
 Use ONLY the retrieved assessments.
 
 Never invent assessment names.
@@ -320,40 +278,89 @@ ask a clarification question.
 """
 
         return prompt
-    
+
+    def comparison_prompt(
+        self,
+        conversation,
+        retrieved_context,
+    ):
+        """
+        Builds a comparison prompt.
+        """
+
+        conversation_text = ""
+
+        for message in conversation:
+
+            conversation_text += (
+                f"{message['role'].capitalize()}: "
+                f"{message['content']}\n"
+            )
+
+        prompt = f"""
+{SYSTEM_PROMPT}
+
+{COMPARISON_GUIDELINES}
+
+Conversation
+
+{conversation_text}
+
+--------------------------------------------------
+
+Relevant SHL Assessments
+
+{retrieved_context}
+
+--------------------------------------------------
+
+Compare ONLY using the retrieved assessment information.
+
+Do not invent capabilities,
+features,
+or differences.
+
+If information is unavailable,
+say so explicitly.
+"""
+
+        return prompt
     
     def run(self, conversation):
-
         """
-        Main orchestration function.
+        Main orchestration workflow.
         """
 
-        # Step 1: Latest user message
-        latest_message = self.get_latest_user_message(conversation)
+        # Latest user message
+        latest_message = self.get_latest_user_message(
+            conversation
+        )
 
-        # Step 2: Refuse off-topic requests
+        # Off-topic handling
         if self.is_off_topic(latest_message):
             return self.off_topic_response()
 
-        # Step 3: Ask clarification if needed
+        # Clarification handling
         if self.needs_clarification(latest_message):
             return self.ask_clarification()
 
-        # Step 4: Build retrieval query from full conversation
-        search_query = self.build_search_query(conversation)
+        # Build retrieval query
+        search_query = self.build_search_query(
+            conversation
+        )
 
-        # Step 5: Retrieve assessments
-        retrieved_documents = self.retriever.retrieve(
+        # Lazy-loaded retrieval
+        retrieved_documents = self.get_retriever().retrieve(
             search_query,
             top_k=5
         )
 
-        # Step 6: Format retrieved assessments
+        # Format retrieved assessments
         retrieved_context = self.format_retrieved_documents(
             retrieved_documents
         )
 
-        # Step 7: Build prompt
+        # Build appropriate prompt
         if self.is_comparison(latest_message):
 
             prompt = self.comparison_prompt(
@@ -368,21 +375,13 @@ ask a clarification question.
                 retrieved_context
             )
 
-        # Step 8: Generate Gemini response
-        response = self.generate_llm_response(prompt)
+        # Generate final answer
+        response = self.generate_llm_response(
+            prompt
+        )
 
-        # Step 9: Return response
         return response
 
-    
-
-    
-
-
-
-
-
-    
 
 if __name__ == "__main__":
 
@@ -391,16 +390,14 @@ if __name__ == "__main__":
     conversation = [
         {
             "role": "user",
-            "content": "Who won yesterday's cricket match?"
+            "content": "Hiring a mid-level Java developer with stakeholder interaction."
         }
     ]
-
-    response = agent.run(conversation)
 
     print("\n==============================")
     print("Agent Response")
     print("==============================\n")
 
-    print(response)
-    
-
+    print(
+        agent.run(conversation)
+    )
